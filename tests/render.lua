@@ -34,12 +34,12 @@ package.loaded.image = {
 
 local fixture = [[
 {
-  #| café **bold**
+  #| # café **bold**
   #|
   #| | Item | Status |
   #| | ---- | ------ |
   #| | café | `yes`  |
-  answer = 42; #| `trailing`
+  answer = 42; #| ## `trailing`
   #| ![local](sample%20image.png)
   #| ![remote](https://example.com/image.png)
   #| `![code](sample%20image.png)`
@@ -48,7 +48,8 @@ local fixture = [[
   /*
   #| **in a block comment**
   */
-  #++ **another marker**
+  #++ A Setext title
+  #++ ------------
 }]]
 local source = vim.split(fixture, "\n")
 api.nvim_buf_set_name(buf, dir .. "/test.nix")
@@ -81,16 +82,19 @@ local function wait_for_image(row)
 end
 wait_for_image(7)
 assert(loads == 1, "only the local image should render")
-assert(#seen == 3 and seen[1][2] == "" and seen[2][1] == "`trailing`" and #seen[2] == 1)
+assert(#seen == 3 and seen[1][2] == "" and seen[2][1] == "## `trailing`" and #seen[2] == 1)
 assert(vim.deep_equal(api.nvim_buf_get_lines(buf, 0, -1, false), source) and #api.nvim_list_wins() == 1)
 
 local bold, top, bottom, cell, rails = nil, nil, nil, nil, 0
+local headings = {}
 for _, mark in ipairs(marks()) do
   local _, row, col, d = unpack(mark)
   assert(row >= 1 and row <= 9, "decorations escaped the marked comments")
   if d.hl_group == rail then
     rails = rails + 1
     assert(d.end_col - col == 2 and fn.strdisplaywidth(d.conceal) == 2)
+  elseif d.hl_group == "MarkviewHeading1" or d.hl_group == "MarkviewHeading2" then
+    headings[row] = source[row + 1]:sub(col + 1, d.end_col)
   elseif row == 1 and d.hl_group == "@markup.strong" then
     bold = source[row + 1]:sub(col + 1, d.end_col)
   elseif d.virt_lines then
@@ -103,6 +107,7 @@ for _, mark in ipairs(marks()) do
   end
 end
 assert(bold == "**bold**" and rails == 9 and top and bottom and cell)
+assert(headings[1] == "# café **bold**" and headings[6] == "## `trailing`", "highlight should cover only heading text")
 local insert_raw = false
 api.nvim_create_autocmd("ModeChanged", {
   pattern = "*:i",
@@ -130,12 +135,17 @@ setup({ marker = "++" })
 wait_for(function()
   return #seen == 6
 end)
+local setext
 for _, mark in ipairs(marks()) do
-  assert(mark[2] == 15, "only the new marker should render")
-  if mark[4].hl_group == rail then
-    assert(mark[4].end_col - mark[3] == 3 and fn.strdisplaywidth(mark[4].conceal) == 2)
+  local _, row, col, d = unpack(mark)
+  assert(row == 15 or row == 16, "only the new marker should render")
+  if d.hl_group == rail then
+    assert(d.end_col - col == 3 and fn.strdisplaywidth(d.conceal) == 2)
+  elseif row == 15 and d.hl_group == "MarkviewHeading2" then
+    setext = source[row + 1]:sub(col + 1, d.end_col)
   end
 end
+assert(setext == "A Setext title")
 vim.bo[buf].filetype = "lua"
 assert(#marks() == 0)
 fn.delete(dir, "rf")

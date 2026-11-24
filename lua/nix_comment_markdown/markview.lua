@@ -35,16 +35,22 @@ local function render_content(content, tables)
   assert(ok, err)
 end
 
-local function read_marks(tables)
+local function read_marks(lines, tables)
   local marks = api.nvim_buf_get_extmarks(scratch, -1, 0, -1, { details = true })
   local ends = {}
   local ns = #tables > 0 and api.nvim_get_namespaces()["markview/markdown"]
   for _, item in ipairs(tables) do
     ends[item.range.row_end] = true
   end
-  for _, mark in ipairs(marks) do
+  for i = 1, #marks do
+    local mark = marks[i]
     local _, row, _, details = unpack(mark)
     mark.options = decoration(details)
+    if details.line_hl_group and lines[row + 1] and lines[row + 1] ~= "" then
+      local opts = decoration({ hl_group = details.line_hl_group })
+      opts.priority = vim.hl.priorities.treesitter + 1
+      marks[#marks + 1] = { 0, row, 0, { end_row = row, end_col = #lines[row + 1] }, options = opts }
+    end
     if ends[row] and details.ns_id == ns and details.virt_lines then
       mark[2], details.virt_lines_above = row - 1, false
     end
@@ -85,7 +91,7 @@ local function render(lines, with_images)
   local content, sorted = require("markview.parser").parse(scratch, nil, nil, false)
   local tables = sorted.markdown and sorted.markdown.markdown_table or {}
   render_content(content, tables)
-  local marks = read_marks(tables)
+  local marks = read_marks(lines, tables)
   return marks, append_inline(marks, with_images)
 end
 
