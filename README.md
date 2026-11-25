@@ -15,4 +15,6 @@ require("nix_comment_markdown").setup()
 
 In Nix windows, set `conceallevel=2` and `concealcursor=n`, and exclude `nix` from Markview's own preview (including any custom `preview.condition`).
 
+In Normal mode, the cursor line shows the original comment so the cursor stays aligned; other lines stay rendered.
+
 Options: `marker = ":"` for `#:`, `rail = false` to keep `#|` visible, or `images = true` for local images with [image.nvim](https://github.com/3rd/image.nvim).

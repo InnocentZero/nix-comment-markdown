@@ -55,6 +55,8 @@ local source = vim.split(fixture, "\n")
 api.nvim_buf_set_name(buf, dir .. "/test.nix")
 api.nvim_buf_set_lines(buf, 0, -1, false, source)
 vim.bo[buf].filetype = "nix"
+vim.wo[win].conceallevel = 2
+vim.wo[win].concealcursor = "n"
 local adapter = require("nix_comment_markdown.markview")
 local render, seen = adapter.render, {}
 adapter.render = function(lines, ...)
@@ -70,6 +72,15 @@ setup({ images = true })
 local ns = api.nvim_get_namespaces()["nix-comment-markdown"]
 local function marks()
   return api.nvim_buf_get_extmarks(buf, ns, 0, -1, { details = true })
+end
+local function row_marks(row)
+  return vim.tbl_filter(function(mark)
+    return mark[2] == row
+  end, marks())
+end
+local function move(row, col)
+  api.nvim_win_set_cursor(win, { row + 1, col or 0 })
+  api.nvim_exec_autocmds("CursorMoved", { buffer = buf })
 end
 local function wait_for(check)
   assert(vim.wait(1000, check), "preview did not refresh")
@@ -108,6 +119,33 @@ for _, mark in ipairs(marks()) do
 end
 assert(bold == "**bold**" and rails == 9 and top and bottom and cell)
 assert(headings[1] == "# café **bold**" and headings[6] == "## `trailing`", "highlight should cover only heading text")
+
+local heading, table_row, trailing = row_marks(1), row_marks(3), row_marks(6)
+move(1, 15)
+assert(#row_marks(1) == 0 and vim.deep_equal(row_marks(3), table_row))
+assert(vim.deep_equal(row_marks(6), trailing) and api.nvim_win_get_cursor(win)[2] == 15)
+vim.cmd.redraw()
+local pos = fn.screenpos(win, 2, 16)
+assert(pos.curscol == fn.strdisplaywidth(source[2]:sub(1, 15)) + 1 and fn.screenstring(pos.row, pos.curscol) == "b")
+assert(fn.screenstring(pos.row, 3) .. fn.screenstring(pos.row, 4) == "#|")
+move(6, 19)
+assert(#row_marks(1) == #heading and #row_marks(6) == 0)
+move(7)
+assert(#row_marks(6) == #trailing and #row_marks(7) == 0 and not next(active))
+move(0)
+assert(#row_marks(7) > 0 and next(active) and loads == 2 and #seen == 3)
+assert(vim.deep_equal(api.nvim_buf_get_lines(buf, 0, -1, false), source))
+local function row_styles(row)
+  return vim.tbl_map(function(mark)
+    return { mark[3], mark[4] }
+  end, row_marks(row))
+end
+local table_footer = row_styles(5)
+move(5)
+assert(#row_marks(5) == 0)
+move(0)
+assert(vim.deep_equal(row_styles(5), table_footer), "moving away should restore the table footer and its styles")
+
 local insert_raw = false
 api.nvim_create_autocmd("ModeChanged", {
   pattern = "*:i",
@@ -146,6 +184,28 @@ for _, mark in ipairs(marks()) do
   end
 end
 assert(setext == "A Setext title")
+
+api.nvim_buf_set_lines(buf, 0, -1, false, { "{", "  #++ **across", "  #++ two lines**", "}" })
+api.nvim_exec_autocmds("TextChanged", { buffer = buf })
+move(2)
+local function strong_on(row)
+  for _, mark in ipairs(row_marks(row)) do
+    if mark[4].hl_group == "@markup.strong" then
+      return true
+    end
+  end
+  return false
+end
+wait_for(function()
+  return strong_on(1)
+end)
+assert(#row_marks(2) == 0, "a cross-line range must not decorate the cursor line")
+move(1)
+assert(#row_marks(1) == 0 and strong_on(2), "the other half of the range should still be rendered")
+vim.cmd.new()
+assert(strong_on(1) and strong_on(2), "leaving the buffer should restore the revealed line")
+vim.cmd.close()
+assert(#row_marks(1) == 0 and strong_on(2), "returning should reveal the cursor line again")
 vim.bo[buf].filetype = "lua"
 assert(#marks() == 0)
 fn.delete(dir, "rf")

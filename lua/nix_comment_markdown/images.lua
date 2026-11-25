@@ -8,15 +8,12 @@ local function local_path(dir, path)
   if path == "" or path:find("[%z\r\n]") or path:match("^[%a][%w+.-]*:") or path:sub(1, 2) == "//" then
     return
   end
-  if path:sub(1, 1) ~= "/" then
-    if not dir then
-      return
-    end
-    path = vim.fs.joinpath(dir, path)
+  path = path:sub(1, 1) == "/" and path or dir and vim.fs.joinpath(dir, path)
+  if path then
+    path = vim.fs.normalize(path, { expand_env = false })
+    local stat = vim.uv.fs_stat(path)
+    return stat and stat.type == "file" and path or nil
   end
-  path = vim.fs.normalize(path, { expand_env = false })
-  local stat = vim.uv.fs_stat(path)
-  return stat and stat.type == "file" and path or nil
 end
 
 local function decorate_padding(img, prefix)
@@ -58,38 +55,36 @@ return function(show_rail)
     return
   end
 
-  return function(buf, links)
+  return function(buf, links, raw_row)
     if links and not image.is_enabled() then
       return
     end
-    local current, missing = {}, {}
-    local file = api.nvim_buf_get_name(buf)
-    local dir = file ~= "" and vim.fs.dirname(file) or nil
-    for _, img in ipairs(image.get_images({ buffer = buf, namespace = namespace })) do
-      current[img.id] = img
-    end
+    local wanted = {}
+    local file = links and api.nvim_buf_get_name(buf)
+    local dir = file and file ~= "" and vim.fs.dirname(file)
     local wins = vim.tbl_filter(function(win)
       return api.nvim_win_get_buf(win) == buf and api.nvim_win_get_config(win).relative == ""
     end, links and api.nvim_tabpage_list_wins(0) or empty)
     for row, link in pairs(#wins > 0 and links or empty) do
-      local path = local_path(dir, link.path)
+      local path = row ~= raw_row and local_path(dir, link.path)
       local x = #link.prefix.raw
       for _, win in ipairs(path and wins or empty) do
         local id = ("%s:%d:%d:%d:%d:%s"):format(namespace, buf, win, row, x, path)
-        if current[id] then
-          current[id] = nil
-        else
-          local opts = { id = id, buffer = buf, namespace = namespace, window = win, x = x, y = row }
-          opts.with_virtual_padding = true
-          missing[#missing + 1] = { path, opts, show_rail and link.prefix }
-        end
+        wanted[id] = { path, win, row, link.prefix }
       end
     end
-    for _, img in pairs(current) do
-      img:clear()
+    for _, img in ipairs(image.get_images({ buffer = buf, namespace = namespace })) do
+      if wanted[img.id] then
+        wanted[img.id] = nil
+      else
+        img:clear()
+      end
     end
-    for _, job in ipairs(missing) do
-      add_image(image, unpack(job, 1, 3))
+    for id, job in pairs(wanted) do
+      local path, win, row, prefix = unpack(job)
+      local opts = { id = id, buffer = buf, namespace = namespace, window = win, x = #prefix.raw, y = row }
+      opts.with_virtual_padding = true
+      add_image(image, path, opts, show_rail and prefix)
     end
   end
 end

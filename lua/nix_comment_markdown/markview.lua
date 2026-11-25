@@ -9,10 +9,13 @@ local image_query = inline_query .. "(image (link_destination) @path)"
 local table_window =
   { relative = "editor", row = 0, col = 0, width = 1, height = 1, hide = true, focusable = false, noautocmd = true }
 local virtual_borders = { markdown = { tables = { use_virt_lines = true } } }
-local style_keys = vim.split("hl_group hl_eol hl_mode conceal virt_text virt_text_pos virt_text_hide url", " ")
+local style_keys = vim.split(
+  "hl_group hl_eol hl_mode conceal url end_row end_col virt_text virt_text_pos virt_text_hide virt_lines virt_lines_above",
+  " "
+)
 
-local function decoration(style)
-  local opts = { undo_restore = false, invalidate = true, priority = math.max(110, style.priority or 0) }
+local function decoration(style, priority)
+  local opts = { undo_restore = false, invalidate = true, priority = priority or style.priority or 110 }
   for _, key in ipairs(style_keys) do
     opts[key] = style[key]
   end
@@ -43,17 +46,17 @@ local function read_marks(lines, tables)
     ends[item.range.row_end] = true
   end
   for i = 1, #marks do
-    local mark = marks[i]
-    local _, row, _, details = unpack(mark)
-    mark.options = decoration(details)
-    if details.line_hl_group and lines[row + 1] and lines[row + 1] ~= "" then
+    local _, row, col, details = unpack(marks[i])
+    local opts, line = decoration(details, math.max(110, details.priority or 0)), lines[row + 1]
+    if details.line_hl_group and line and line ~= "" then
       local opts = decoration({ hl_group = details.line_hl_group })
-      opts.priority = vim.hl.priorities.treesitter + 1
-      marks[#marks + 1] = { 0, row, 0, { end_row = row, end_col = #lines[row + 1] }, options = opts }
+      opts.priority, opts.end_col = vim.hl.priorities.treesitter + 1, #line
+      marks[#marks + 1] = { row, 0, opts }
     end
-    if ends[row] and details.ns_id == ns and details.virt_lines then
-      mark[2], details.virt_lines_above = row - 1, false
+    if ends[row] and details.ns_id == ns and opts.virt_lines then
+      row, opts.virt_lines_above = row - 1, false
     end
+    marks[i] = { row, col, opts }
   end
   return marks
 end
@@ -73,8 +76,9 @@ local function append_inline(marks, with_images)
         images[row] = images[row] or ts.get_node_text(node, scratch)
       else
         local row, col, last, last_col = node:range()
-        local style = capture == "delimiter" and { conceal = "" } or { hl_group = "@" .. capture }
-        marks[#marks + 1] = { 0, row, col, { end_row = last, end_col = last_col }, options = decoration(style) }
+        local opts = decoration(capture == "delimiter" and { conceal = "" } or { hl_group = "@" .. capture })
+        opts.end_row, opts.end_col = last, last_col
+        marks[#marks + 1] = { row, col, opts }
       end
     end
   end
@@ -96,6 +100,7 @@ local function render(lines, with_images)
 end
 
 return {
+  decoration = decoration,
   render = render,
   in_preview_mode = function()
     return require("markview.actions").in_preview_mode()
