@@ -130,7 +130,7 @@ local function setup(opts)
     local leaving = name == "BufLeave" or name == "WinLeave"
     local motion = leaving or name == "CursorMoved" or name == "CursorMovedI"
     local row = not leaving and cursor_row(buf) or nil
-    if not motion then
+    if not leaving then
       local drop = name == "BufUnload" or not is_nix(buf)
       if drop or row and not adapter.in_preview_mode() then
         return clear(buf, drop)
@@ -141,7 +141,7 @@ local function setup(opts)
     if fresh then
       reveal(buf, entry, row, motion and images)
     end
-    if motion or fresh and not images or entry and entry.pending then
+    if leaving or fresh and (motion or not images) or entry and entry.pending then
       return
     end
     entry = entry or { cache = empty }

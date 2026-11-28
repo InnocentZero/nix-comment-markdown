@@ -147,18 +147,22 @@ assert(#row_marks(5) == 0)
 move(0)
 assert(vim.deep_equal(row_styles(5), table_footer), "moving away should restore the table footer and its styles")
 
-local insert_raw = false
+move(1)
+local insert_raw, ignore = false, vim.o.eventignore
 api.nvim_create_autocmd("ModeChanged", {
   pattern = "*:i",
   once = true,
   callback = function()
     insert_raw = #marks() == 0 and not next(active)
+    vim.o.eventignore = "ModeChanged,TextChanged"
   end,
 })
 api.nvim_feedkeys(vim.keycode("i<Esc>"), "nx", false)
 assert(insert_raw, "Insert mode should show raw comments without images")
+move(0)
 wait_for_image(7)
-assert(#marks() > 0 and #seen == 3, "switching modes without editing should reuse the Markdown cache")
+vim.o.eventignore = ignore
+assert(#row_marks(1) == #heading and #seen == 3, "moving after Insert should restore the preview from cache")
 local loads_after_insert = loads
 edit(10, "  # unrelated edit")
 vim.wait(150)
