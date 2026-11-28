@@ -18,24 +18,22 @@ local function project(buf, base, lines, prefixes, marks, rail_enabled)
   for _, mark in ipairs(marks) do
     local anchor, col, style = unpack(mark)
     local row, finish = math.min(anchor, last), style.end_row or anchor
-    -- Split ranges by source line so revealing one row doesn't drop a whole Markdown span.
     for r = row, math.min(finish, last) do
       local prefix, width = prefixes[r + 1], #lines[r + 1]
       local ending = r == finish and math.min(style.end_col or width, width) or width
-      if r == row or ending > 0 then
-        local opts, offset = vim.tbl_extend("force", {}, style), #prefix.raw
-        opts.end_row, opts.end_col = nil, style.end_col and offset + ending
-        if r ~= row then
-          opts.virt_text, opts.virt_text_pos, opts.virt_text_hide = nil, nil, nil
-          opts.virt_lines, opts.virt_lines_above = nil, nil
-        elseif style.virt_lines then
+      local fill = style.hl_eol and r < finish
+      if r == row or ending > 0 or fill then
+        local opts, offset = adapter.decoration(style, r ~= row), #prefix.raw
+        opts.end_row = fill and base + r + 1 or nil
+        opts.end_col = fill and 0 or style.end_col and offset + ending
+        if opts.virt_lines then
           local chunks = rail.prefix(prefix, rail_enabled)
           opts.virt_lines = vim.tbl_map(function(line)
             return vim.list_extend({ unpack(chunks) }, line)
           end, style.virt_lines)
           opts.virt_lines_above = anchor <= last and style.virt_lines_above or false
         end
-        local start = anchor > last and width or math.min(col, width)
+        local start = math.min(col, width)
         api.nvim_buf_set_extmark(buf, ns, base + r, offset + (r == row and start or 0), opts)
       end
     end
@@ -95,8 +93,8 @@ local function reveal(buf, entry, row, images)
   end
   entry.raw_row = row
   entry.hidden = row and api.nvim_buf_get_extmarks(buf, ns, { row, 0 }, { row, -1 }, { details = true })
-  if entry.hidden and #entry.hidden > 0 then
-    api.nvim_buf_clear_namespace(buf, ns, row, row + 1)
+  for _, mark in ipairs(entry.hidden or empty) do
+    api.nvim_buf_del_extmark(buf, ns, mark[1])
   end
   if images and (entry.links[old] or entry.links[row]) then
     images(buf, entry.links, row)
@@ -139,7 +137,6 @@ local function setup(opts)
       end
     end
     local entry = buffers[buf]
-    -- After an edit, refresh remaps all rows before we use their cached positions.
     local fresh = entry and entry.tick == api.nvim_buf_get_changedtick(buf)
     if fresh then
       reveal(buf, entry, row, motion and images)

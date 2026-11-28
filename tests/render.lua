@@ -105,7 +105,8 @@ for _, mark in ipairs(marks()) do
     rails = rails + 1
     assert(d.end_col - col == 2 and fn.strdisplaywidth(d.conceal) == 2)
   elseif d.hl_group == "MarkviewHeading1" or d.hl_group == "MarkviewHeading2" then
-    headings[row] = source[row + 1]:sub(col + 1, d.end_col)
+    assert(d.hl_eol and d.end_row == row + 1 and d.end_col == 0)
+    headings[row] = source[row + 1]:sub(col + 1)
   elseif row == 1 and d.hl_group == "@markup.strong" then
     bold = source[row + 1]:sub(col + 1, d.end_col)
   elseif d.virt_lines then
@@ -118,7 +119,7 @@ for _, mark in ipairs(marks()) do
   end
 end
 assert(bold == "**bold**" and rails == 9 and top and bottom and cell)
-assert(headings[1] == "# café **bold**" and headings[6] == "## `trailing`", "highlight should cover only heading text")
+assert(headings[1] == "# café **bold**" and headings[6] == "## `trailing`", "highlight should start after the rail")
 
 local heading, table_row, trailing = row_marks(1), row_marks(3), row_marks(6)
 move(1, 15)
@@ -180,7 +181,8 @@ for _, mark in ipairs(marks()) do
   if d.hl_group == rail then
     assert(d.end_col - col == 3 and fn.strdisplaywidth(d.conceal) == 2)
   elseif row == 15 and d.hl_group == "MarkviewHeading2" then
-    setext = source[row + 1]:sub(col + 1, d.end_col)
+    assert(d.hl_eol and d.end_row == row + 1 and d.end_col == 0)
+    setext = source[row + 1]:sub(col + 1)
   end
 end
 assert(setext == "A Setext title")
@@ -206,6 +208,35 @@ vim.cmd.new()
 assert(strong_on(1) and strong_on(2), "leaving the buffer should restore the revealed line")
 vim.cmd.close()
 assert(#row_marks(1) == 0 and strong_on(2), "returning should reveal the cursor line again")
+move(0)
+local fence = { "{", "  #| ```lua", "  #| local x = 1", "  #|", "  #| ```", "}" }
+api.nvim_buf_set_lines(buf, 0, -1, false, fence)
+setup()
+wait_for(function()
+  return vim.iter(row_marks(2)):any(function(mark)
+    return mark[3] == #fence[3] and mark[4].virt_text ~= nil
+  end)
+end)
+assert(#api.nvim_list_wins() == 1)
+
+require("markview").setup({ markdown = { code_blocks = { style = "simple" } } })
+setup()
+wait_for(function()
+  return #row_marks(3) > 1
+end)
+api.nvim_set_hl(0, "MarkviewCode", { bg = "#ff3300", ctermbg = 196 })
+vim.cmd.redraw()
+local function attr(row, col)
+  return fn.screenattr(fn.screenpos(win, row + 1, 1).row, col)
+end
+local fill = attr(2, 40)
+assert(fill == attr(2, 6) and fill == attr(3, 40), "fill should reach past text and cover blank lines")
+assert(fill ~= attr(2, 3) and fill ~= attr(5, 40), "fill should not color the rail or Nix source")
+local code, blank = row_styles(2), row_styles(3)
+move(3)
+assert(vim.deep_equal(row_styles(2), code) and #row_marks(3) == 0)
+move(0)
+assert(vim.deep_equal(row_styles(3), blank))
 vim.bo[buf].filetype = "lua"
 assert(#marks() == 0)
 fn.delete(dir, "rf")
