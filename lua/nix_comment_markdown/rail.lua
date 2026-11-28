@@ -1,5 +1,5 @@
-local group = "NixCommentMarkdownRail"
-local cells = { "  ", group }
+local GROUP, WIDTH = "NixCommentMarkdownRail", 2
+local width = vim.fn.strdisplaywidth
 
 local function highlight()
   local dark = vim.o.background == "dark"
@@ -8,23 +8,38 @@ local function highlight()
   local shift = math.max(r, g, b) < 24 and 12 or -12
   local color = math.max(0, r + shift) * 65536 + math.max(0, g + shift) * 256 + math.max(0, b + shift)
   local cterm = dark and 235 or 250
-  vim.api.nvim_set_hl(0, group, { fg = color, bg = color, ctermfg = cterm, ctermbg = cterm })
-end
-
-local function chunks(prefix, show_rail)
-  local display_width = vim.fn.strdisplaywidth
-  if show_rail == false then
-    return { { string.rep(" ", display_width(prefix.raw)) } }
-  end
-  local width = display_width(prefix.raw:sub(1, prefix.marker_start))
-  local sep = display_width(prefix.raw:sub(prefix.marker_end + 1), width + 2)
-  return { { string.rep(" ", width) }, cells, { string.rep(" ", sep) } }
+  vim.api.nvim_set_hl(0, GROUP, { fg = color, bg = color, ctermfg = cterm, ctermbg = cterm })
 end
 
 local function setup(augroup)
   highlight()
   vim.api.nvim_create_autocmd("ColorScheme", { group = augroup, callback = highlight })
-  return { conceal = "　", hl_group = group, priority = 10000, undo_restore = false, invalidate = true }
 end
 
-return { setup = setup, prefix = chunks }
+local function indent(line, enabled)
+  if not enabled then
+    return { { string.rep(" ", width(line.prefix)) } }
+  end
+  local before = width(line.prefix:sub(1, line.marker_start))
+  local after = width(line.prefix:sub(line.marker_end + 1), before + WIDTH)
+  return { { string.rep(" ", before) }, { string.rep(" ", WIDTH), GROUP }, { string.rep(" ", after) } }
+end
+
+local function prefix_width(line, enabled)
+  return width(table.concat(vim.tbl_map(function(chunk)
+    return chunk[1]
+  end, indent(line, enabled))))
+end
+
+local function mark(line)
+  return {
+    end_col = line.marker_end,
+    conceal = "　",
+    hl_group = GROUP,
+    priority = 10000,
+    undo_restore = false,
+    invalidate = true,
+  }
+end
+
+return { setup = setup, indent = indent, width = prefix_width, mark = mark }

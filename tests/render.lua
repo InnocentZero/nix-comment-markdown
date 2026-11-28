@@ -28,6 +28,7 @@ package.loaded.image = {
   from_file = function(path, opts)
     loads = loads + 1
     assert(path == png and opts.buffer == buf and opts.window == win and opts.with_virtual_padding)
+    assert(opts.x == 5, "images start after the 5-cell prefix")
     return { id = opts.id, row = opts.y, render = render_image, clear = clear_image }
   end,
 }
@@ -55,13 +56,12 @@ local source = vim.split(fixture, "\n")
 api.nvim_buf_set_name(buf, dir .. "/test.nix")
 api.nvim_buf_set_lines(buf, 0, -1, false, source)
 vim.bo[buf].filetype = "nix"
-vim.wo[win].conceallevel = 2
-vim.wo[win].concealcursor = "n"
 local adapter = require("nix_comment_markdown.markview")
-local render, seen = adapter.render, {}
-adapter.render = function(lines, ...)
+local render, seen, widths = adapter.render, {}, {}
+adapter.render = function(lines, width, ...)
   seen[#seen + 1] = lines
-  return render(lines, ...)
+  widths[#widths + 1] = width
+  return render(lines, width, ...)
 end
 
 local function edit(row, line)
@@ -92,8 +92,9 @@ local function wait_for_image(row)
   end)
 end
 wait_for_image(7)
-assert(loads == 1, "only the local image should render")
+assert(loads == 1 and vim.wo[win].conceallevel == 2, "only the local image should render, with conceal on")
 assert(#seen == 3 and seen[1][2] == "" and seen[2][1] == "## `trailing`" and #seen[2] == 1)
+assert(widths[1] == api.nvim_win_get_width(win) - 5, "render width should leave room for the prefix")
 assert(vim.deep_equal(api.nvim_buf_get_lines(buf, 0, -1, false), source) and #api.nvim_list_wins() == 1)
 
 local bold, top, bottom, cell, rails = nil, nil, nil, nil, 0
@@ -241,6 +242,30 @@ move(3)
 assert(vim.deep_equal(row_styles(2), code) and #row_marks(3) == 0)
 move(0)
 assert(vim.deep_equal(row_styles(3), blank))
+
+local warning, notify, recording = nil, vim.notify, adapter.render
+vim.notify = function(msg)
+  warning = msg
+end
+adapter.render = function(lines, ...)
+  assert(lines[1] ~= "boom", "boom")
+  return recording(lines, ...)
+end
+api.nvim_buf_set_lines(buf, 0, -1, false, { "{", "  #| boom", "  x = 1;", "  #| **fine**", "}" })
+api.nvim_exec_autocmds("TextChanged", { buffer = buf })
+wait_for(function()
+  return strong_on(3)
+end)
+vim.notify, adapter.render = notify, recording
+assert(warning and warning:find("boom") and #row_marks(1) == 0, "a failing block should stay raw and warn")
+
+local before = #seen
+api.nvim_buf_set_lines(buf, 0, -1, false, { "{", "  #| outer", "    #| inner", "}" })
+api.nvim_exec_autocmds("TextChanged", { buffer = buf })
+wait_for(function()
+  return #seen == before + 2
+end)
+assert(seen[before + 1][1] == "outer" and #seen[before + 1] == 1, "a new indent should start a new block")
 vim.bo[buf].filetype = "lua"
 assert(#marks() == 0)
 fn.delete(dir, "rf")

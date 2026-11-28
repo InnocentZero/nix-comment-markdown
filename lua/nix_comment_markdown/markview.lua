@@ -4,93 +4,61 @@ local inline_query = [[
   (strong_emphasis) @markup.strong
   (emphasis) @markup.italic
   (emphasis_delimiter) @delimiter
+  (image (link_destination) @path)
 ]]
-local image_query = inline_query .. "(image (link_destination) @path)"
-local render_window =
-  { relative = "editor", row = 0, col = 0, height = 1, hide = true, focusable = false, noautocmd = true }
+local window = { relative = "editor", row = 0, col = 0, height = 1, hide = true, focusable = false, noautocmd = true }
+window.style = "minimal"
 local virtual_borders = { markdown = { tables = { use_virt_lines = true } } }
-local style_keys = vim.split(
-  "hl_group hl_eol hl_mode conceal url end_row end_col virt_text virt_text_pos virt_text_hide virt_lines virt_lines_above",
-  " "
-)
 
-local function decoration(style, range_only)
-  local opts = { undo_restore = false, invalidate = true, priority = style.priority or 110 }
-  for _, key in ipairs(style_keys) do
-    if not range_only or key:sub(1, 5) ~= "virt_" then
-      opts[key] = style[key]
-    end
-  end
-  return opts
-end
-
-local function read_marks()
-  local marks = api.nvim_buf_get_extmarks(scratch, -1, 0, -1, { details = true })
-  for i = 1, #marks do
-    local _, row, col, details = unpack(marks[i])
-    details.priority = math.max(110, details.priority or 0)
-    if details.line_hl_group then
-      local fill = decoration({ hl_group = details.line_hl_group })
-      fill.hl_eol, fill.end_row, fill.end_col, fill.priority = true, row + 1, 0, vim.hl.priorities.treesitter + 1
-      marks[#marks + 1] = { row, 0, fill }
-    end
-    marks[i] = { row, col, decoration(details) }
-  end
-  return marks
-end
-
-local function append_inline(marks, with_images)
-  local inline = markdown:children().markdown_inline
-  if not inline then
-    return
-  end
-  local query = ts.query.parse("markdown_inline", with_images and image_query or inline_query)
-  local images = with_images and {}
-  for _, tree in pairs(inline:trees()) do
-    for id, node in query:iter_captures(tree:root(), scratch) do
-      local capture = query.captures[id]
-      if capture == "path" then
-        local row = node:parent():range()
-        images[row] = images[row] or ts.get_node_text(node, scratch)
-      else
-        local row, col, last, last_col = node:range()
-        local opts = decoration(capture == "delimiter" and { conceal = "" } or { hl_group = "@" .. capture })
-        opts.end_row, opts.end_col = last, last_col
-        marks[#marks + 1] = { row, col, opts }
-      end
-    end
-  end
-  return images
-end
-
-local function render(lines, with_images)
-  if not scratch or not api.nvim_buf_is_loaded(scratch) then
-    scratch = api.nvim_create_buf(false, true)
-    markdown = assert(ts.get_parser(scratch, "markdown"))
-  end
-  api.nvim_buf_clear_namespace(scratch, -1, 0, -1)
-  api.nvim_buf_set_lines(scratch, 0, -1, false, lines)
+local function run_markview(width)
   local spec = require("markview.spec")
   local previous = spec.tmp_config
-  render_window.width = vim.o.columns
-  local win = api.nvim_open_win(scratch, false, render_window)
+  window.width = width
+  local win = api.nvim_open_win(scratch, false, window)
   vim.wo[win].wrap = false
   spec.tmp_setup(vim.tbl_deep_extend("force", previous or spec.config, virtual_borders))
   local ok, err = pcall(api.nvim_win_call, win, function()
-    local content = require("markview.parser").parse(scratch, nil, nil, false)
-    require("markview.renderer").render(scratch, content)
+    require("markview.renderer").render(scratch, require("markview.parser").parse(scratch, nil, nil, false))
   end)
   spec.tmp_setup(previous)
   api.nvim_win_close(win, true)
   assert(ok, err)
-  local marks = read_marks()
-  return marks, append_inline(marks, with_images)
 end
 
-return {
-  decoration = decoration,
-  render = render,
-  in_preview_mode = function()
-    return require("markview.actions").in_preview_mode()
-  end,
-}
+local function render(lines, width, with_images)
+  if not (scratch and api.nvim_buf_is_loaded(scratch)) then
+    scratch, markdown = api.nvim_create_buf(false, true), nil
+  end
+  markdown = markdown or assert(ts.get_parser(scratch, "markdown"))
+  api.nvim_buf_clear_namespace(scratch, -1, 0, -1)
+  api.nvim_buf_set_lines(scratch, 0, -1, false, lines)
+  run_markview(width)
+  local marks, images = {}, with_images and {} or nil
+  for _, mark in ipairs(api.nvim_buf_get_extmarks(scratch, -1, 0, -1, { details = true })) do
+    local _, row, col, details = unpack(mark)
+    details.priority = math.max(110, details.priority or 0)
+    if details.line_hl_group then
+      local fill = { hl_group = details.line_hl_group, hl_eol = true, end_row = row + 1, end_col = 0, priority = 101 }
+      marks[#marks + 1], details.line_hl_group = { row, 0, fill }, nil
+    end
+    marks[#marks + 1] = { row, col, details }
+  end
+  markdown:parse(true)
+  local query = ts.query.parse("markdown_inline", inline_query)
+  for _, tree in pairs(markdown:children().markdown_inline and markdown:children().markdown_inline:trees() or {}) do
+    for id, node in query:iter_captures(tree:root(), scratch) do
+      local capture, row, col, last, last_col = query.captures[id], node:range()
+      if capture ~= "path" then
+        local details = capture == "delimiter" and { conceal = "" } or { hl_group = "@" .. capture }
+        details.end_row, details.end_col, details.priority = last, last_col, 110
+        marks[#marks + 1] = { row, col, details }
+      elseif images then
+        row = node:parent():range()
+        images[row] = images[row] or ts.get_node_text(node, scratch)
+      end
+    end
+  end
+  return marks, images
+end
+
+return { render = render }
